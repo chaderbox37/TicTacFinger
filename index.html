@@ -43,12 +43,12 @@
             margin-bottom: 5px; 
             font-weight: 900; 
             font-style: italic;
-            font-variant: small-caps; /* Changed to Small Caps */
+            font-variant: small-caps; 
             letter-spacing: 2px; 
             color: #ffffff;
             text-shadow: 2px 2px 0px #800020, 3px 3px 0px #000000; 
             text-align: center;
-            font-size: clamp(2.5em, 8vw, 3.5em); /* Increased font size */
+            font-size: clamp(2.5em, 8vw, 3.5em); 
         }
 
         #status { margin-bottom: 15px; font-weight: bold; font-size: clamp(1.1em, 4vw, 1.4em); height: 1.4em; text-align: center; }
@@ -226,3 +226,385 @@
             <h4>Examples Set 2 (Rotations & Flipped)</h4>
             <div class="examples-grid">
                 <div class="example-box">Diagonal 5-in-a-Row<div class="mini-board" id="ex-standard-diag"></div></div>
+                <div class="example-box">The Hook (Alternate)<div class="mini-board" id="ex-hook-horiz"></div></div>
+                <div class="example-box">House of Pain (Flipped)<div class="mini-board" id="ex-house-flipped"></div></div>
+            </div>
+
+            <button class="close-btn" onclick="toggleInstructions(false)">Got It. Let's Play!</button>
+        </div>
+    </div>
+
+    <script>
+        const boardSize = 5;
+        let currentPlayer = 'X';
+        let gameState = Array(boardSize).fill().map(() => Array(boardSize).fill('')); 
+        let gameActive = true;
+        let currentMode = 'local'; 
+
+        const boardElement = document.getElementById('board');
+        const statusElement = document.getElementById('status');
+        const modal = document.getElementById('instructions-modal');
+
+        // --- PEERJS MULTIPLAYER VARIABLES ---
+        let peer = null;
+        let conn = null;
+        let myRole = ''; 
+        const roomPrefix = 'tictacfinger-';
+
+        function toggleInstructions(show) {
+            if (show) modal.classList.add('show');
+            else modal.classList.remove('show');
+        }
+        function closeIfOutside(event) {
+            if (event.target === modal) toggleInstructions(false);
+        }
+
+        function drawMiniBoards() {
+            const createMini = (id, highlights) => {
+                const b = document.getElementById(id);
+                if (!b) return; 
+                b.innerHTML = ''; 
+                for(let i=0; i<25; i++) {
+                    let cell = document.createElement('div');
+                    cell.className = 'mini-cell';
+                    if (highlights.includes(i)) { cell.textContent = 'X'; cell.classList.add('hi'); }
+                    b.appendChild(cell);
+                }
+            };
+            createMini('ex-standard-horiz', [10, 11, 12, 13, 14]); 
+            createMini('ex-hook-vert', [6, 7, 11, 13, 16]); 
+            createMini('ex-house-up', [6, 7, 11, 13, 16, 17]); 
+            createMini('ex-standard-diag', [0, 6, 12, 18, 24]); 
+            createMini('ex-hook-horiz', [11, 12, 13, 18, 22]); 
+            createMini('ex-house-flipped', [6, 7, 8, 11, 13, 17]); 
+        }
+        
+        function setMode(mode) {
+            currentMode = mode;
+            document.querySelectorAll('.game-btn').forEach(btn => btn.classList.remove('active-mode'));
+            document.getElementById(`btn-${mode}`).classList.add('active-mode');
+            
+            const onlinePanel = document.getElementById('online-panel');
+            if (mode === 'online') {
+                onlinePanel.style.display = 'block';
+                initPeer(); 
+            } else {
+                onlinePanel.style.display = 'none';
+                if (conn) { conn.close(); conn = null; }
+                document.getElementById('online-setup').style.display = 'block';
+                document.getElementById('online-connected').style.display = 'none';
+            }
+            resetGame(false);
+        }
+
+        // --- NETWORKING LOGIC ---
+        function initPeer() {
+            if (peer) return; 
+            
+            const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+            let roomCode = '';
+            for ( let i = 0; i < 5; i++ ) { roomCode += characters.charAt(Math.floor(Math.random() * characters.length)); }
+            
+            document.getElementById('connection-status').textContent = "Connecting to server...";
+            
+            peer = new Peer(roomPrefix + roomCode);
+            
+            peer.on('open', (id) => {
+                document.getElementById('my-room-code').textContent = roomCode;
+                document.getElementById('connection-status').textContent = "Waiting for an opponent...";
+            });
+
+            peer.on('connection', (connection) => {
+                conn = connection;
+                setupConnection('X'); 
+            });
+        }
+
+        function joinRoom() {
+            const joinCode = document.getElementById('join-code').value.toUpperCase().trim();
+            if (joinCode.length !== 5) {
+                document.getElementById('connection-status').textContent = "Invalid code. Must be 5 letters.";
+                return;
+            }
+            
+            document.getElementById('connection-status').textContent = "Joining room...";
+            conn = peer.connect(roomPrefix + joinCode);
+            
+            conn.on('open', () => {
+                setupConnection('O'); 
+            });
+        }
+
+        function setupConnection(role) {
+            myRole = role;
+            document.getElementById('online-setup').style.display = 'none';
+            document.getElementById('online-connected').style.display = 'block';
+            document.getElementById('online-role').textContent = `You are playing as: ${role}`;
+            
+            conn.on('data', (data) => {
+                if (data.type === 'move') {
+                    let cellElement = document.getElementById(`cell-${data.r}-${data.c}`);
+                    processMove(data.r, data.c, cellElement, true); 
+                } else if (data.type === 'reset') {
+                    resetGame(false); 
+                }
+            });
+            
+            resetGame(false);
+        }
+
+
+        // --- CORE GAME ---
+        function createBoard() {
+            boardElement.innerHTML = '';
+            for (let r = 0; r < boardSize; r++) {
+                for (let c = 0; c < boardSize; c++) {
+                    const cell = document.createElement('div');
+                    cell.classList.add('cell');
+                    cell.dataset.row = r;
+                    cell.dataset.col = c;
+                    cell.id = `cell-${r}-${c}`; 
+                    cell.addEventListener('click', handleCellClick);
+                    boardElement.appendChild(cell);
+                }
+            }
+        }
+
+        function handleCellClick(event) {
+            const clickedCell = event.target;
+            const r = parseInt(clickedCell.dataset.row);
+            const c = parseInt(clickedCell.dataset.col);
+
+            if (gameState[r][c] !== '' || !gameActive) return; 
+            
+            if (currentMode !== 'local' && currentMode !== 'online' && currentPlayer === 'O' && event.isTrusted) return;
+
+            if (currentMode === 'online') {
+                if (!conn || !conn.open) {
+                    alert("Connect to a friend first!");
+                    return;
+                }
+                if (currentPlayer !== myRole) {
+                    return; 
+                }
+                conn.send({ type: 'move', r: r, c: c });
+            }
+
+            processMove(r, c, clickedCell, false);
+        }
+
+        function processMove(r, c, clickedCell, isFromNetwork) {
+            gameState[r][c] = currentPlayer;
+            clickedCell.textContent = currentPlayer;
+            clickedCell.classList.add('taken', currentPlayer.toLowerCase());
+
+            let hookResult = checkHookWin(currentPlayer);
+            if (hookResult) {
+                if (hookResult.type === 'House') {
+                    statusElement.textContent = `PLAYER ${currentPlayer} WINS via HOUSE OF PAIN!`;
+                } else {
+                    statusElement.textContent = `PLAYER ${currentPlayer} WINS via The Hook!`;
+                }
+                highlightWinningSquares(hookResult.winningCells);
+                gameActive = false;
+                return;
+            }
+
+            let standardWinCells = checkStandardWin();
+            if (standardWinCells) {
+                statusElement.textContent = `PLAYER ${currentPlayer} WINS (Standard 5-in-a-row)!`;
+                highlightWinningSquares(standardWinCells);
+                gameActive = false;
+                return;
+            }
+
+            if (gameState.flat().every(cell => cell !== '')) {
+                statusElement.textContent = "Game ended in a DRAW!";
+                gameActive = false;
+                return;
+            }
+
+            currentPlayer = currentPlayer === 'X' ? 'O' : 'X';
+            updateStatusText();
+
+            if (currentMode !== 'local' && currentMode !== 'online' && currentPlayer === 'O' && gameActive) {
+                statusElement.textContent = "Computer is thinking...";
+                setTimeout(computerMove, 600); 
+            }
+        }
+
+        function updateStatusText() {
+            if (currentMode === 'online' && conn && conn.open) {
+                if (currentPlayer === myRole) {
+                    statusElement.textContent = "YOUR TURN!";
+                    statusElement.style.color = "#00ff00";
+                } else {
+                    statusElement.textContent = "Opponent's Turn...";
+                    statusElement.style.color = "#eeeeee";
+                }
+            } else {
+                statusElement.textContent = `Player ${currentPlayer}'s Turn`;
+                statusElement.style.color = "#eeeeee";
+            }
+        }
+
+        function computerMove() {
+            if (!gameActive) return;
+            
+            let emptyCells = [];
+            for (let r = 0; r < boardSize; r++) {
+                for (let c = 0; c < boardSize; c++) {
+                    if (gameState[r][c] === '') emptyCells.push({r, c});
+                }
+            }
+            if (emptyCells.length === 0) return;
+
+            let pick = null;
+            let makeSmartMove = false;
+            if (currentMode === 'hard') makeSmartMove = true; 
+            else if (currentMode === 'medium') makeSmartMove = Math.random() < 0.85; 
+
+            if (makeSmartMove) {
+                pick = findWinningMove('O'); 
+                if (!pick) pick = findWinningMove('X'); 
+                if (!pick && gameState[2][2] === '') pick = {r: 2, c: 2}; 
+            }
+
+            if (!pick) pick = emptyCells[Math.floor(Math.random() * emptyCells.length)];
+
+            let cellElement = document.getElementById(`cell-${pick.r}-${pick.c}`);
+            processMove(pick.r, pick.c, cellElement, false);
+        }
+
+        function findWinningMove(playerToTest) {
+            for (let r = 0; r < boardSize; r++) {
+                for (let c = 0; c < boardSize; c++) {
+                    if (gameState[r][c] === '') {
+                        gameState[r][c] = playerToTest; 
+                        let standardWin = checkStandardWin();
+                        let hookWin = checkHookWin(playerToTest);
+                        let isStandardWinForPlayer = false;
+                        if (standardWin && gameState[standardWin[0][0]][standardWin[0][1]] === playerToTest) isStandardWinForPlayer = true;
+                        gameState[r][c] = ''; 
+                        if (isStandardWinForPlayer || hookWin) return {r, c}; 
+                    }
+                }
+            }
+            return null; 
+        }
+
+        function highlightWinningSquares(coordinateArray) {
+            coordinateArray.forEach(coords => {
+                const cell = document.getElementById(`cell-${coords[0]}-${coords[1]}`);
+                if (cell) cell.classList.add('winning-pattern');
+            });
+        }
+
+        function resetGame(sendNetworkSync) {
+            currentPlayer = 'X';
+            gameState = Array(boardSize).fill().map(() => Array(boardSize).fill(''));
+            gameActive = true;
+            createBoard(); 
+            updateStatusText();
+            
+            if (currentMode === 'online' && sendNetworkSync && conn && conn.open) {
+                conn.send({ type: 'reset' });
+            }
+
+            if (currentMode !== 'local' && currentMode !== 'online' && currentPlayer === 'O') setTimeout(computerMove, 600);
+        }
+
+        function getCell(r, c) {
+            if (r >= 0 && r < boardSize && c >= 0 && c < boardSize) return gameState[r][c];
+            return null;
+        }
+
+        function checkHookWin(player) {
+            for (let r = 0; r < boardSize; r++) {
+                for (let c = 0; c < boardSize; c++) {
+                    if (getCell(r, c) === player) { 
+                        if (getCell(r, c-1) === player && getCell(r, c+1) === player) {
+                            let corePattern = [[r,c-1], [r,c], [r,c+1]]; 
+                            if (getCell(r-2, c) === player) {
+                                let M_piece = [[r-2, c]];
+                                let corners = [];
+                                if (getCell(r-1, c-1) === player) corners.push([r-1, c-1]);
+                                if (getCell(r-1, c+1) === player) corners.push([r-1, c+1]);
+                                if (corners.length >= 1) return { type: (corners.length === 2) ? 'House' : 'Hook', winningCells: [...corePattern, ...M_piece, ...corners] };
+                            }
+                            if (getCell(r+2, c) === player) {
+                                let M_piece = [[r+2, c]];
+                                let corners = [];
+                                if (getCell(r+1, c-1) === player) corners.push([r+1, c-1]);
+                                if (getCell(r+1, c+1) === player) corners.push([r+1, c+1]);
+                                if (corners.length >= 1) return { type: (corners.length === 2) ? 'House' : 'Hook', winningCells: [...corePattern, ...M_piece, ...corners] };
+                            }
+                        }
+                        if (getCell(r-1, c) === player && getCell(r+1, c) === player) {
+                            let corePattern = [[r-1,c], [r,c], [r+1,c]]; 
+                            if (getCell(r, c-2) === player) {
+                                let M_piece = [[r, c-2]];
+                                let corners = [];
+                                if (getCell(r-1, c-1) === player) corners.push([r-1, c-1]);
+                                if (getCell(r+1, c-1) === player) corners.push([r+1, c-1]);
+                                if (corners.length >= 1) return { type: (corners.length === 2) ? 'House' : 'Hook', winningCells: [...corePattern, ...M_piece, ...corners] };
+                            }
+                            if (getCell(r, c+2) === player) {
+                                let M_piece = [[r, c+2]];
+                                let corners = [];
+                                if (getCell(r-1, c+1) === player) corners.push([r-1, c+1]);
+                                if (getCell(r+1, c+1) === player) corners.push([r+1, c+1]);
+                                if (corners.length >= 1) return { type: (corners.length === 2) ? 'House' : 'Hook', winningCells: [...corePattern, ...M_piece, ...corners] };
+                            }
+                        }
+                    }
+                }
+            }
+            return false; 
+        }
+
+        function checkStandardWin() {
+            for (let r = 0; r < boardSize; r++) {
+                for (let c = 0; c <= boardSize - 5; c++) {
+                    let sequence = checkSequence(r, c, 0, 1, 5);
+                    if (sequence) return sequence;
+                }
+            }
+            for (let c = 0; c < boardSize; c++) {
+                for (let r = 0; r <= boardSize - 5; r++) {
+                    let sequence = checkSequence(r, c, 1, 0, 5);
+                    if (sequence) return sequence;
+                }
+            }
+            for (let r = 0; r <= boardSize - 5; r++) {
+                for (let c = 0; c <= boardSize - 5; c++) {
+                    let sequence = checkSequence(r, c, 1, 1, 5);
+                    if (sequence) return sequence;
+                }
+            }
+            for (let r = 0; r <= boardSize - 5; r++) {
+                for (let c = 5 - 1; c < boardSize; c++) {
+                    let sequence = checkSequence(r, c, 1, -1, 5);
+                    if (sequence) return sequence;
+                }
+            }
+            return false;
+        }
+
+        function checkSequence(r, c, rowStep, colStep, count) {
+            let playerMatch = gameState[r][c];
+            if (playerMatch === '') return false;
+            let sequenceCoords = [[r,c]]; 
+            for (let i = 1; i < count; i++) {
+                if (gameState[r + (i * rowStep)][c + (i * colStep)] !== playerMatch) return false;
+                sequenceCoords.push([r + (i * rowStep), c + (i * colStep)]); 
+            }
+            return sequenceCoords; 
+        }
+
+        // Initialize on load
+        createBoard();
+        drawMiniBoards();
+    </script>
+</body>
+</html>

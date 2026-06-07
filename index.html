@@ -202,10 +202,10 @@
         <div class="mode-row">
             <button class="game-btn" id="btn-easy" onclick="setMode('easy')">CPU (Easy)</button>
             <button class="game-btn" id="btn-medium" onclick="setMode('medium')">CPU (Med)</button>
-            <button class="game-btn" id="btn-hard" onclick="setMode('hard')">CPU (Hard)</button>
+            <button class="game-btn active-mode" id="btn-hard" onclick="setMode('hard')">CPU (Hard)</button>
         </div>
         <div class="mode-row">
-            <button class="game-btn active-mode" id="btn-local" onclick="setMode('local')">2P (Local)</button>
+            <button class="game-btn" id="btn-local" onclick="setMode('local')">2P (Local)</button>
             <button class="game-btn" id="btn-online" onclick="setMode('online')">2P (Online)</button>
         </div>
         <button class="game-btn reset-btn" onclick="resetGame(true)">Restart Game</button>
@@ -241,7 +241,7 @@
         let currentPlayer = 'X';
         let gameState = Array(boardSize).fill().map(() => Array(boardSize).fill('')); 
         let gameActive = true;
-        let currentMode = 'local'; 
+        let currentMode = 'hard'; 
 
         const boardElement = document.getElementById('board');
         const statusElement = document.getElementById('status');
